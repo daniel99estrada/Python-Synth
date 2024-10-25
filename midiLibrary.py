@@ -341,7 +341,7 @@ def listen_for_midi_input(midi_synth):
 
 def main():    
     midi_synth = MIDISynthesizer(buffer_size=512)
-    midi_synth.set_waveform('triangle')
+    midi_synth.set_waveform('sawtooth')
     midi_synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
     midi_synth.set_filter_params(resonance = 0.3, cutoff= 0.7, filter_type="lowpass")
     
