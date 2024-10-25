@@ -108,6 +108,62 @@ class ADSR:
         self.release = release
         
 
+class EnvelopeFilter(Filter):
+    def __init__(self, sample_rate):
+        super().__init__(sample_rate)
+        self.base_cutoff = 1000.0  # Base cutoff frequency
+        self.envelope_amount = 0.5  # Amount of envelope modulation (0.0 to 1.0)
+        self.min_cutoff = 20.0
+        self.max_cutoff = 20000.0
+    
+    def set_envelope_amount(self, amount):
+        """Set the amount of envelope modulation (0.0 to 1.0)"""
+        self.envelope_amount = max(0.0, min(1.0, amount))
+    
+    def set_base_cutoff(self, frequency):
+        """Set the base cutoff frequency"""
+        self.base_cutoff = max(self.min_cutoff, min(self.max_cutoff, frequency))
+    
+    def calculate_cutoff(self, envelope_value):
+        """Calculate the current cutoff frequency based on envelope value"""
+        # Scale the envelope value exponentially for more musical results
+        exp_env = envelope_value ** 2
+        
+        # Calculate modulation amount
+        mod_range = self.max_cutoff - self.base_cutoff
+        modulation = mod_range * exp_env * self.envelope_amount
+        
+        # Apply modulation to base cutoff
+        current_cutoff = self.base_cutoff + modulation
+        return max(self.min_cutoff, min(self.max_cutoff, current_cutoff))
+    
+    def process(self, input_signal, envelope_value):
+        """Process audio through the filter with envelope modulation"""
+        output = np.zeros_like(input_signal)
+        
+        # Calculate current cutoff based on envelope
+        self.cutoff = self.calculate_cutoff(envelope_value)
+        
+        # Pre-calculate filter coefficients
+        f = 2.0 * np.sin(np.pi * self.cutoff / self.sample_rate)
+        q = 1.0 - self.resonance
+        
+        for i in range(len(input_signal)):
+            # Update filter state
+            self.high = input_signal[i] - self.low - q * self.band
+            self.band += f * self.high
+            self.low += f * self.band
+            
+            # Output based on filter type
+            if self.type == 'lowpass':
+                output[i] = self.low
+            elif self.type == 'highpass':
+                output[i] = self.high
+            else:  # bandpass
+                output[i] = self.band
+        
+        return output
+
 class MIDISynthesizer:
     def __init__(self, sample_rate=44100, buffer_size=512):
         self.sample_rate = sample_rate
@@ -118,9 +174,20 @@ class MIDISynthesizer:
         self.last_frame = np.zeros(buffer_size)
         self.wave_type = 'sine'
         
-        # Initialize ADSR and Filter
+        # Initialize ADSR and EnvelopeFilter
         self.adsr = ADSR(attack=0.1, decay=0.1, sustain=0.7, release=0.2)
-        self.filter = Filter(sample_rate)
+        self.filter = EnvelopeFilter(sample_rate)
+    
+    def set_filter_params(self, base_cutoff=None, resonance=None, filter_type=None, envelope_amount=None):
+        """Set filter parameters including envelope amount"""
+        if base_cutoff is not None:
+            self.filter.set_base_cutoff(base_cutoff)
+        if resonance is not None:
+            self.filter.set_resonance(resonance)
+        if filter_type is not None:
+            self.filter.set_type(filter_type)
+        if envelope_amount is not None:
+            self.filter.set_envelope_amount(envelope_amount)
         
     def generate_waveform(self, frequency, phase, num_samples):
         t = np.linspace(0, num_samples/self.sample_rate, num_samples, endpoint=False)
@@ -151,6 +218,7 @@ class MIDISynthesizer:
         
         return wave
 
+    
     def start_audio_stream(self):
         def callback(outdata, frames, time, status):
             if status:
@@ -159,8 +227,10 @@ class MIDISynthesizer:
             try:
                 if self.active_notes:
                     combined = np.zeros(frames)
+                    max_envelope = 0.0
                     notes_to_remove = []
                     
+                    # First pass: generate audio and find maximum envelope value
                     for note, note_state in self.active_notes.items():
                         freq = midi_to_frequency(note)
                         wave = self.generate_continuous_tone(
@@ -170,6 +240,7 @@ class MIDISynthesizer:
                         )
                         
                         combined += wave
+                        max_envelope = max(max_envelope, note_state.get_envelope_value(frames))
                         
                         if note_state.is_released and note_state.get_envelope_value(frames) <= 0:
                             notes_to_remove.append(note)
@@ -177,9 +248,9 @@ class MIDISynthesizer:
                     for note in notes_to_remove:
                         del self.active_notes[note]
                     
-                    # Apply filter to combined signal
+                    # Apply envelope-controlled filter to combined signal
                     if len(self.active_notes) > 0:
-                        combined = self.filter.process(combined)
+                        combined = self.filter.process(combined, max_envelope)
                         combined = np.tanh(combined)  # Soft limiting
                     
                     outdata[:] = combined.reshape(-1, 1)
@@ -192,6 +263,7 @@ class MIDISynthesizer:
             except Exception as e:
                 print(f"Error in audio callback: {e}")
                 outdata.fill(0)
+
 
         try:
             self.stream = sd.OutputStream(
@@ -271,6 +343,8 @@ def main():
     midi_synth = MIDISynthesizer(buffer_size=512)
     midi_synth.set_waveform('triangle')
     midi_synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
+    midi_synth.set_filter_params(resonance = 0.3, cutoff= 0.7, filter_type="lowpass")
+    
     
     try:
         listen_for_midi_input(midi_synth)
