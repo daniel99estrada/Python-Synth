@@ -99,7 +99,7 @@ class Effects:
 class Synthesizer:
     def __init__(self, sample_rate=44100):
         self.sample_rate = sample_rate
-        self.amplitude = 0.3
+        self.amplitude = 0.05
         self.adsr = ADSR()
         self.effects = Effects()
         self.filters = Filters()
@@ -175,7 +175,12 @@ class Synthesizer:
     def play_tone(self, waveform):
         """Play the generated waveform."""
         sd.play(waveform, self.sample_rate)
+        # time.sleep(3)
         sd.wait()
+        # sd.stop()
+    
+    def stop_tone():
+        sd.stop()
         
     def generate_chord(self, frequencies, duration, wave_type='sine', 
                       use_adsr=True, tremolo=False, vibrato=False,
