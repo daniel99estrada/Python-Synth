@@ -151,7 +151,7 @@ class EnvelopeFilter(Filter):
         for i in range(len(input_signal)):
             # Update filter state
             self.high = input_signal[i] - self.low - q * self.band
-            self.band += f * self.high
+            self.band +=np.clip(f * self.high, -1e10, 1e10)
             self.low += f * self.band
             
             # Output based on filter type
@@ -301,15 +301,6 @@ class MIDISynthesizer:
         if wave_type in ['sine', 'square', 'sawtooth', 'triangle']:
             self.wave_type = wave_type
 
-    def set_filter_params(self, cutoff=None, resonance=None, filter_type=None):
-        """Set filter parameters"""
-        if cutoff is not None:
-            self.filter.set_cutoff(cutoff)
-        if resonance is not None:
-            self.filter.set_resonance(resonance)
-        if filter_type is not None:
-            self.filter.set_type(filter_type)
-
     def set_adsr(self, attack, decay, sustain, release):
         self.adsr.set_adsr(attack, decay, sustain, release)
 
@@ -339,13 +330,25 @@ def listen_for_midi_input(midi_synth):
         print(f"Error in MIDI input handling: {e}")
         midi_synth.stop_audio_stream()
 
+def list_output_devices():
+    """List available output devices."""
+    devices = sd.query_devices()
+    for i, device in enumerate(devices):
+        print(f"{i} + {device['default_samplerate']}: {device['name']} - {'Input' if device['max_input_channels'] > 0 else 'Output'}")
+
 def main():    
-    midi_synth = MIDISynthesizer(buffer_size=512)
+    list_output_devices()
+    midi_synth = MIDISynthesizer(sample_rate=44100, buffer_size=512)
     midi_synth.set_waveform('sawtooth')
     midi_synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
-    midi_synth.set_filter_params(resonance = 0.3, cutoff= 0.7, filter_type="lowpass")
+    midi_synth.set_filter_params(resonance = 0.3, base_cutoff= 0.7, filter_type="lowpass", envelope_amount =0.1)
     
-    
+    # output_device_index = int(input("Enter the output device index for your headphone jack: "))
+
+    # Set the desired output device for the sounddevice stream
+    # sd.default.device['output'] = output_device_index
+    sd.default.device['output'] = 4
+
     try:
         listen_for_midi_input(midi_synth)
     except KeyboardInterrupt:
