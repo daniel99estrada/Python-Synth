@@ -123,10 +123,11 @@ function App() {
         )}
         
         <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
+          
           {/* Waveform Selection */}
-          <div className="mb-8">
+          <div className="flex flex-col items-start mb-8">
             <h2 className="text-xl font-semibold mb-4">Waveform</h2>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="flex gap-3">
               {['sine', 'square', 'sawtooth', 'triangle'].map((wave) => (
                 <button
                   key={wave}
@@ -141,11 +142,11 @@ function App() {
               ))}
             </div>
           </div>
-
+  
           {/* ADSR Controls */}
-          <div className="mb-8">
+          <div className="flex flex-col items-start mb-8">
             <h2 className="text-xl font-semibold mb-4">ADSR Envelope</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               {Object.entries(settings.adsr).map(([param, value]) => (
                 <div key={param}>
                   <label className="block text-sm font-medium mb-2 capitalize">
@@ -158,17 +159,17 @@ function App() {
                     step="0.01" 
                     value={value}
                     onChange={(e) => updateADSR(param, e.target.value)}
-                    className="w-full"
+                    className="h-full transform rotate-270"
                   />
                 </div>
               ))}
             </div>
           </div>
-
+  
           {/* Filter Controls */}
-          <div className="mb-8">
+          <div className="flex flex-col items-start mb-8">
             <h2 className="text-xl font-semibold mb-4">Filter</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               {Object.entries(settings.filter).map(([param, value]) => (
                 param === 'type' ? (
                   <div key={param}>
@@ -197,14 +198,14 @@ function App() {
                       step="0.01" 
                       value={value}
                       onChange={(e) => updateFilter(param, e.target.value)}
-                      className="w-full"
+                      className="h-full transform rotate-270"
                     />
                   </div>
                 )
               ))}
             </div>
           </div>
-
+  
           {/* Settings Display */}
           <div className="bg-gray-900 rounded-lg p-4">
             <h2 className="text-xl font-semibold mb-2">Current Settings</h2>
@@ -216,6 +217,7 @@ function App() {
       </div>
     </div>
   );
+  
 }
 
 export default App;
