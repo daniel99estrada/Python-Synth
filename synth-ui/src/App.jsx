@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
+// Define default settings before using them
 const defaultSettings = {
   waveform: 'sawtooth',
   adsr: {
@@ -16,27 +17,81 @@ const defaultSettings = {
   }
 };
 
+// Custom hook for WebSocket connection
+const useWebSocket = () => {
+  const [ws, setWs] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const socket = new WebSocket('ws://localhost:8765');
+
+    socket.onopen = () => {
+      console.log('Connected to WebSocket server');
+      setIsConnected(true);
+      setError(null);
+    };
+
+    socket.onclose = () => {
+      console.log('Disconnected from WebSocket server');
+      setIsConnected(false);
+    };
+
+    socket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setError('Failed to connect to synth server');
+    };
+
+    setWs(socket);
+
+    return () => {
+      socket.close();
+    };
+  }, []);
+
+  const sendMessage = useCallback((command, params) => {
+    if (ws && isConnected) {
+      ws.send(JSON.stringify({ command, params }));
+    }
+  }, [ws, isConnected]);
+
+  return { sendMessage, isConnected, error };
+};
+
 function App() {
   const [settings, setSettings] = useState(defaultSettings);
+  const { sendMessage, isConnected, error } = useWebSocket();
 
   const updateADSR = (parameter, value) => {
+    const newValue = parseFloat(value);
     setSettings(prev => ({
       ...prev,
       adsr: {
         ...prev.adsr,
-        [parameter]: parseFloat(value)
+        [parameter]: newValue
       }
     }));
+    
+    sendMessage('set_adsr', {
+      ...settings.adsr,
+      [parameter]: newValue
+    });
   };
 
   const updateFilter = (parameter, value) => {
+    const newValue = parameter === 'type' ? value : parseFloat(value);
     setSettings(prev => ({
       ...prev,
       filter: {
         ...prev.filter,
-        [parameter]: parameter === 'type' ? value : parseFloat(value)
+        [parameter]: newValue
       }
     }));
+    
+    sendMessage('set_filter', {
+      ...settings.filter,
+      [parameter]: newValue
+    });
   };
 
   const setWaveform = (waveform) => {
@@ -44,12 +99,28 @@ function App() {
       ...prev,
       waveform
     }));
+    
+    sendMessage('set_waveform', { waveform });
   };
 
   return (
     <div className="min-h-screen bg-gray-900 text-white py-8">
       <div className="max-w-4xl mx-auto px-4">
-        <h1 className="text-3xl font-bold text-center mb-8">MIDI Synthesizer</h1>
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold">MIDI Synthesizer</h1>
+          <div className="flex items-center gap-2">
+            <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+            <span className="text-sm">
+              {isConnected ? 'Connected' : 'Disconnected'}
+            </span>
+          </div>
+        </div>
+        
+        {error && (
+          <div className="bg-red-500 text-white p-4 rounded-lg mb-6">
+            {error}
+          </div>
+        )}
         
         <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
           {/* Waveform Selection */}
