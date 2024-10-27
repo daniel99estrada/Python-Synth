@@ -10,9 +10,9 @@ const defaultSettings = {
     release: 0.6
   },
   filter: {
-    cutoff: 0.7,
+    base_cutoff: 0.7,
     resonance: 0.3,
-    envelopeAmount: 0.1,
+    envelope_amount: 0.1,
     type: 'lowpass'
   }
 };

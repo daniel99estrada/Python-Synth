@@ -30,7 +30,7 @@ class SynthServer:
         self.synth.set_filter_params(
             resonance=0.3,
             base_cutoff=0.7,
-            filter_type="lowpass",
+            type="lowpass",
             envelope_amount=0.1
         )
     
@@ -83,6 +83,7 @@ class SynthServer:
                         
                     elif command == 'set_filter':
                         self.synth.set_filter_params(**params)
+                        print(params)
                         
                     # Send confirmation back to client
                     await websocket.send(json.dumps({
