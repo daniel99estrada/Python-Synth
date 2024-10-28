@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 
-// Define default settings before using them
 const defaultSettings = {
   waveform: 'sawtooth',
   adsr: {
@@ -14,10 +13,16 @@ const defaultSettings = {
     resonance: 0.3,
     envelope_amount: 0.1,
     type: 'lowpass'
+  },
+  lfo: {
+    rate: 0.7,
+    pitch_depth: 0.3,
+    filter_depth: 0.1,
+    wave_type: 'sine',
   }
 };
 
-// Custom hook for WebSocket connection
+// WebSocket hook remains the same
 const useWebSocket = () => {
   const [ws, setWs] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -58,7 +63,7 @@ const useWebSocket = () => {
   return { sendMessage, isConnected, error };
 };
 
-function App() {
+const App = () => {
   const [settings, setSettings] = useState(defaultSettings);
   const { sendMessage, isConnected, error } = useWebSocket();
 
@@ -94,6 +99,24 @@ function App() {
     });
   };
 
+  const updateLFO = (parameter, value) => {
+    const newValue = parameter === 'wave_type' ? value : parseFloat(value);
+    setSettings(prev => ({
+      ...prev,
+      lfo: {
+        ...prev.lfo,
+        [parameter]: newValue
+      }
+    }));
+    
+    if (parameter === 'pitch_mix' || parameter === 'filter_mix') {
+      sendMessage('set_lfo_params', {
+        ...settings.lfo,
+        [parameter]: newValue
+      });
+    }
+  };
+
   const setWaveform = (waveform) => {
     setSettings(prev => ({
       ...prev,
@@ -122,9 +145,9 @@ function App() {
           </div>
         )}
         
-        <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
+        <div className="bg-gray-800 rounded-lg p-6 shadow-lg space-y-8">
           {/* Waveform Selection */}
-          <div className="mb-8">
+          <div>
             <h2 className="text-xl font-semibold mb-4">Waveform</h2>
             <div className="grid grid-cols-4 gap-3">
               {['sine', 'square', 'sawtooth', 'triangle'].map((wave) => (
@@ -143,7 +166,7 @@ function App() {
           </div>
 
           {/* ADSR Controls */}
-          <div className="mb-8">
+          <div>
             <h2 className="text-xl font-semibold mb-4">ADSR Envelope</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {Object.entries(settings.adsr).map(([param, value]) => (
@@ -166,7 +189,7 @@ function App() {
           </div>
 
           {/* Filter Controls */}
-          <div className="mb-8">
+          <div>
             <h2 className="text-xl font-semibold mb-4">Filter</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {Object.entries(settings.filter).map(([param, value]) => (
@@ -188,7 +211,7 @@ function App() {
                 ) : (
                   <div key={param}>
                     <label className="block text-sm font-medium mb-2 capitalize">
-                      {param}: {value.toFixed(2)}
+                      {param.replace('_', ' ')}: {value.toFixed(2)}
                     </label>
                     <input 
                       type="range" 
@@ -205,6 +228,44 @@ function App() {
             </div>
           </div>
 
+          {/* LFO Controls */}
+          <div>
+            <h2 className="text-xl font-semibold mb-4">LFO</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* LFO Wave Type Selection */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Wave Type</label>
+                <select
+                  value={settings.lfo.wave_type}
+                  onChange={(e) => updateLFO('wave_type', e.target.value)}
+                  className="w-full bg-gray-700 rounded-md px-3 py-2"
+                >
+                  <option value="sine">Sine</option>
+                  <option value="triangle">Triangle</option>
+                  <option value="square">Square</option>
+                </select>
+              </div>
+
+              {/* LFO Parameters */}
+              {['rate', 'pitch_depth', 'filter_depth'].map((param) => (
+                <div key={param}>
+                  <label className="block text-sm font-medium mb-2 capitalize">
+                    {param.replace('_', ' ')}: {settings.lfo[param].toFixed(2)}
+                  </label>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="1" 
+                    step="0.01" 
+                    value={settings.lfo[param]}
+                    onChange={(e) => updateLFO(param, e.target.value)}
+                    className="w-full"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Settings Display */}
           <div className="bg-gray-900 rounded-lg p-4">
             <h2 className="text-xl font-semibold mb-2">Current Settings</h2>
@@ -216,6 +277,6 @@ function App() {
       </div>
     </div>
   );
-}
+};
 
 export default App;

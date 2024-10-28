@@ -148,6 +148,20 @@ class ADSR:
         self.sustain = max(0.0, min(1.0, sustain))
         self.release = max(0.001, release)
 
+    def get_params(self):
+        """
+        Returns the current ADSR envelope parameters
+        
+        Returns:
+        dict: Dictionary containing attack, decay, sustain, and release values
+        """
+        return {
+            'attack': self.attack,
+            'decay': self.decay,
+            'sustain': self.sustain,
+            'release': self.release
+        }
+
     def set_adsr(self, attack, decay, sustain, release):
         """
         Sets the ADSR envelope parameters for the synthesizer
@@ -236,8 +250,52 @@ class MIDISynthesizer:
         # Initialize ADSR, EnvelopeFilter, and LFO
         self.adsr = ADSR(attack=0.1, decay=0.1, sustain=0.7, release=0.2)
         self.filter = EnvelopeFilter(sample_rate)
-        self.lfo = LFO(sample_rate)        
-
+        self.lfo = LFO(sample_rate)  
+        
+    def get_lfo_params(self):
+        """
+        Returns the current LFO parameters
+        
+        Returns:
+        dict: Dictionary containing LFO parameters including rate, depths, wave type, and mix levels
+        """
+        return {
+            'rate': self.lfo.rate,
+            'pitch_depth': self.lfo.depth,
+            'filter_depth': self.lfo.filter_depth,
+            'wave_type': self.lfo.wave_type,
+            'pitch_mix': self.lfo.pitch_mix,
+            'filter_mix': self.lfo.filter_mix
+        }
+    
+    def get_adsr_params(self):
+        """
+        Returns the current ADSR envelope parameters
+        
+        Returns:
+        dict: Dictionary containing ADSR parameters
+        """
+        return self.adsr.get_params()
+    
+    def get_filter_params(self):
+        """
+        Returns the current filter parameters
+        
+        Returns:
+        dict: Dictionary containing filter parameters including base cutoff,
+              resonance, filter type, and envelope amount
+        """
+        return {
+            'base_cutoff': self.filter.base_cutoff,
+            'resonance': self.filter.resonance,
+            'type': self.filter.type,
+            'envelope_amount': self.filter.envelope_amount,
+            'min_cutoff': self.filter.min_cutoff,
+            'max_cutoff': self.filter.max_cutoff,
+            'current_cutoff': self.filter.cutoff,
+            'current_lfo_mod': self.filter.lfo_mod
+        }
+        
     def generate_continuous_tone(self, frequency, num_samples, note_state):
         # Pre-calculate all LFO values for this buffer
         pitch_mod = np.zeros(num_samples)
@@ -283,7 +341,7 @@ class MIDISynthesizer:
         """Set the mix levels for LFO modulation"""
         self.lfo.set_mix(pitch_mix, filter_mix)
     
-    def set_lfo_params(self, rate=None, pitch_depth=None, filter_depth=None, wave_type=None):
+    def set_lfo_params(self, rate=None, pitch_depth=None, filter_depth=None,pitch_mix=None, filter_mix=None, wave_type=None):
         """Set LFO parameters including separate depths for pitch and filter"""
         if rate is not None:
             self.lfo.set_rate(rate)
@@ -291,6 +349,10 @@ class MIDISynthesizer:
             self.lfo.set_depth(pitch_depth)
         if filter_depth is not None:
             self.lfo.set_filter_depth(filter_depth)
+        if pitch_mix is not None:
+            self.lfo.set_mix(pitch_mix)
+        if filter_mix is not None:
+            self.lfo.set_filter_depth(filter_mix)
         if wave_type is not None:
             self.lfo.set_wave_type(wave_type)
     

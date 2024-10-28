@@ -33,6 +33,19 @@ class SynthServer:
             type="lowpass",
             envelope_amount=0.1
         )
+        self.synth.set_lfo_mix(
+            pitch_mix=0.8,
+            filter_mix=0.5
+        )
+        # Log initial setup
+    
+    async def register(self, websocket):
+        self.clients.add(websocket)
+        self.logger.info(f"Client connected. Total clients: {len(self.clients)}")
+        
+    async def unregister(self, websocket):
+        self.clients.remove(websocket)
+        self.logger.info(f"Client disconnected. Total clients: {len(self.clients)}")
     
     async def register(self, websocket):
         self.clients.add(websocket)
@@ -48,9 +61,16 @@ class SynthServer:
             return
             
         state = {
-            'waveform': self.synth.current_waveform,
+            'waveform': self.synth.wave_type,
             'adsr': self.synth.get_adsr_params(),
-            'filter': self.synth.get_filter_params()
+            'filter': self.synth.get_filter_params(),
+            'lfo': {
+                'params': self.synth.get_lfo_params(),
+                'mix': {
+                    'pitch': self.synth.lfo_pitch_mix,
+                    'filter': self.synth.lfo_filter_mix
+                }
+            }
         }
         
         message = json.dumps({
@@ -63,7 +83,7 @@ class SynthServer:
         )
 
     async def handle_message(self, websocket):
-        """Handle incoming WebSocket messages"""
+        """Handle incoming WebSocket messages with enhanced LFO logging"""
         try:
             await self.register(websocket)
             
@@ -83,8 +103,35 @@ class SynthServer:
                         
                     elif command == 'set_filter':
                         self.synth.set_filter_params(**params)
-                        print(params)
+
+                    elif command == 'set_lfo_params':
+                        # Enhanced LFO parameter logging
+                        lfo_params = {}
+                        if 'rate' in params:
+                            lfo_params['rate'] = float(params['rate'])
+                        if 'pitch_depth' in params:
+                            lfo_params['pitch_depth'] = float(params['pitch_depth'])
+                        if 'filter_depth' in params:
+                            lfo_params['filter_depth'] = float(params['filter_depth'])
+                        if 'wave_type' in params:
+                            lfo_params['wave_type'] = params['wave_type']
                         
+                        self.synth.set_lfo_params(**lfo_params)
+                        self.logger.debug(f"LFO parameters updated: {json.dumps(lfo_params, indent=2)}")
+                        
+                    elif command == 'set_lfo_mix':
+                        # Enhanced LFO mix logging
+                        pitch_mix = float(params.get('pitch_mix', 0.0))
+                        filter_mix = float(params.get('filter_mix', 0.0))
+                        
+                        self.synth.set_lfo_mix(
+                            pitch_mix=pitch_mix,
+                            filter_mix=filter_mix
+                        )
+                        self.logger.debug(
+                            f"LFO mix updated - Pitch: {pitch_mix:.2f}, Filter: {filter_mix:.2f}"
+                        )
+                    
                     # Send confirmation back to client
                     await websocket.send(json.dumps({
                         'status': 'success',
@@ -95,6 +142,7 @@ class SynthServer:
                     await self.broadcast_state()
                     
                 except json.JSONDecodeError:
+                    self.logger.error("Invalid JSON format received")
                     await websocket.send(json.dumps({
                         'status': 'error',
                         'message': 'Invalid JSON format'
