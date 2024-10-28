@@ -6,6 +6,42 @@ from collections import defaultdict
 import threading
 import time
 
+class LFO:
+    def __init__(self, sample_rate):
+        self.sample_rate = sample_rate
+        self.phase = 0.0
+        self.rate = 2.0  # Hz
+        self.depth = 0.5  # Semitones
+        self.wave_type = 'sine'
+    
+    def set_rate(self, rate):
+        """Set LFO rate in Hz (0.1 to 20 Hz)"""
+        self.rate = max(0.1, min(20.0, rate))
+    
+    def set_depth(self, depth):
+        """Set LFO depth in semitones (0 to 12)"""
+        self.depth = max(0.0, min(12.0, depth))
+    
+    def set_wave_type(self, wave_type):
+        """Set LFO waveform type"""
+        if wave_type in ['sine', 'triangle', 'square']:
+            self.wave_type = wave_type
+    
+    def generate_sample(self):
+        """Generate next LFO sample and update phase"""
+        if self.wave_type == 'sine':
+            value = np.sin(self.phase)
+        elif self.wave_type == 'triangle':
+            value = 2 * abs(2 * (self.phase / (2 * np.pi) - np.floor(0.5 + self.phase / (2 * np.pi)))) - 1
+        else:  # square
+            value = np.sign(np.sin(self.phase))
+        
+        # Update phase
+        self.phase += 2 * np.pi * self.rate / self.sample_rate
+        self.phase %= 2 * np.pi
+        
+        return value * self.depth
+    
 class Filter:
     def __init__(self, sample_rate):
         self.sample_rate = sample_rate
@@ -174,9 +210,51 @@ class MIDISynthesizer:
         self.last_frame = np.zeros(buffer_size)
         self.wave_type = 'sine'
         
-        # Initialize ADSR and EnvelopeFilter
+        # Initialize ADSR, EnvelopeFilter, and LFO
         self.adsr = ADSR(attack=0.1, decay=0.1, sustain=0.7, release=0.2)
         self.filter = EnvelopeFilter(sample_rate)
+        self.lfo = LFO(sample_rate)
+    
+    def set_lfo_params(self, rate=None, depth=None, wave_type=None):
+        """Set LFO parameters"""
+        if rate is not None:
+            self.lfo.set_rate(rate)
+        if depth is not None:
+            self.lfo.set_depth(depth)
+        if wave_type is not None:
+            self.lfo.set_wave_type(wave_type)
+    
+    def generate_continuous_tone(self, frequency, num_samples, note_state):
+        # Generate array of frequencies with LFO modulation
+        lfo_mod = np.array([self.lfo.generate_sample() for _ in range(num_samples)])
+        # Convert semitone modulation to frequency multiplier
+        freq_mod = 2 ** (lfo_mod / 12)
+        modulated_freq = frequency * freq_mod
+        
+        # Generate phase increments for varying frequency
+        phase_increments = 2 * np.pi * modulated_freq / self.sample_rate
+        # Calculate phase array
+        phases = note_state.phase + np.cumsum(phase_increments)
+        
+        # Generate waveform
+        if self.wave_type == 'sine':
+            wave = np.sin(phases)
+        elif self.wave_type == 'square':
+            wave = np.sign(np.sin(phases))
+        elif self.wave_type == 'sawtooth':
+            wave = 2 * (phases / (2 * np.pi) - np.floor(0.5 + phases / (2 * np.pi)))
+        elif self.wave_type == 'triangle':
+            wave = 2 * np.abs(2 * (phases / (2 * np.pi) - np.floor(0.5 + phases / (2 * np.pi)))) - 1
+        
+        # Apply envelope
+        envelope = note_state.get_envelope_value(num_samples)
+        wave *= envelope * note_state.velocity * 0.3
+        
+        # Update phase for next buffer
+        note_state.phase = phases[-1] % (2 * np.pi)
+        note_state.total_samples += num_samples
+        
+        return wave
     
     def set_filter_params(self, base_cutoff=None, resonance=None, type=None, envelope_amount=None):
         """Set filter parameters including envelope amount"""
@@ -203,21 +281,6 @@ class MIDISynthesizer:
             return 2 * np.abs(2 * (omega / (2 * np.pi) - np.floor(0.5 + omega / (2 * np.pi)))) - 1
         
         return np.sin(omega)
-
-    def generate_continuous_tone(self, frequency, num_samples, note_state):
-        # Generate the base waveform
-        wave = self.generate_waveform(frequency, note_state.phase, num_samples)
-        
-        # Apply envelope
-        envelope = note_state.get_envelope_value(num_samples)
-        wave *= envelope * note_state.velocity * 0.3
-        
-        # Update phase and total samples for next buffer
-        note_state.phase = (note_state.phase + 2 * np.pi * frequency * num_samples/self.sample_rate) % (2 * np.pi)
-        note_state.total_samples += num_samples
-        
-        return wave
-
     
     def start_audio_stream(self):
         def callback(outdata, frames, time, status):
@@ -341,10 +404,16 @@ def listen_for_midi_input(midi_synth):
 
 def main():    
     midi_synth = MIDISynthesizer(buffer_size=512)
-    midi_synth.set_waveform('sawtooth')
+    midi_synth.set_waveform('triangle')
     midi_synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
-    midi_synth.set_filter_params(resonance = 0.3, cutoff= 0.7, filter_type="lowpass")
+    midi_synth.set_filter_params(resonance=0.3, base_cutoff=1000, type="lowpass")
     
+    # Set up LFO
+    midi_synth.set_lfo_params(
+        rate=1.0,    # 5 Hz
+        depth=0.4,   # 0.5 semitones
+        wave_type='triangle'
+    )
     
     try:
         listen_for_midi_input(midi_synth)
