@@ -147,10 +147,16 @@ class ADSR:
 class EnvelopeFilter(Filter):
     def __init__(self, sample_rate):
         super().__init__(sample_rate)
-        self.base_cutoff = 1000.0  # Base cutoff frequency
-        self.envelope_amount = 0.5  # Amount of envelope modulation (0.0 to 1.0)
+        self.base_cutoff = 1000.0
+        self.envelope_amount = 0.5
         self.min_cutoff = 20.0
         self.max_cutoff = 20000.0
+        self.lfo_mod = 0.0
+        self.adsr_mix = 0.5  # New ADSR mix control
+
+    def set_adsr_mix(self, mix_amount):
+        """Set the mix between static filter and ADSR-controlled filter (0.0 to 1.0)"""
+        self.adsr_mix = max(0.0, min(1.0, mix_amount))
     
     def set_envelope_amount(self, amount):
         """Set the amount of envelope modulation (0.0 to 1.0)"""
@@ -161,16 +167,22 @@ class EnvelopeFilter(Filter):
         self.base_cutoff = max(self.min_cutoff, min(self.max_cutoff, frequency))
     
     def calculate_cutoff(self, envelope_value):
-        """Calculate the current cutoff frequency based on envelope value"""
-        # Scale the envelope value exponentially for more musical results
+        """Calculate cutoff frequency with ADSR mix control"""
+        # Scale the envelope value exponentially
         exp_env = envelope_value ** 2
         
-        # Calculate modulation amount
+        # Calculate envelope modulation with mix control
         mod_range = self.max_cutoff - self.base_cutoff
-        modulation = mod_range * exp_env * self.envelope_amount
+        env_modulation = mod_range * exp_env * self.envelope_amount * self.adsr_mix
         
-        # Apply modulation to base cutoff
-        current_cutoff = self.base_cutoff + modulation
+        # Mix between static and modulated filter
+        static_cutoff = self.base_cutoff
+        modulated_cutoff = self.base_cutoff + env_modulation + self.lfo_mod
+        
+        # Crossfade between static and modulated cutoff
+        current_cutoff = (static_cutoff * (1 - self.adsr_mix) + 
+                         modulated_cutoff * self.adsr_mix)
+        
         return max(self.min_cutoff, min(self.max_cutoff, current_cutoff))
     
     def process(self, input_signal, envelope_value):
@@ -256,8 +268,9 @@ class MIDISynthesizer:
         
         return wave
     
-    def set_filter_params(self, base_cutoff=None, resonance=None, type=None, envelope_amount=None):
-        """Set filter parameters including envelope amount"""
+    def set_filter_params(self, base_cutoff=None, resonance=None, type=None, 
+                         envelope_amount=None, adsr_mix=None):
+        """Set filter parameters including envelope amount and ADSR mix"""
         if base_cutoff is not None:
             self.filter.set_base_cutoff(base_cutoff)
         if resonance is not None:
@@ -266,6 +279,8 @@ class MIDISynthesizer:
             self.filter.set_type(type)
         if envelope_amount is not None:
             self.filter.set_envelope_amount(envelope_amount)
+        if adsr_mix is not None:
+            self.filter.set_adsr_mix(adsr_mix)
         
     def generate_waveform(self, frequency, phase, num_samples):
         t = np.linspace(0, num_samples/self.sample_rate, num_samples, endpoint=False)
@@ -364,15 +379,6 @@ class MIDISynthesizer:
         if wave_type in ['sine', 'square', 'sawtooth', 'triangle']:
             self.wave_type = wave_type
 
-    # def set_filter_params(self, cutoff=None, resonance=None, filter_type=None):
-    #     """Set filter parameters"""
-    #     if cutoff is not None:
-    #         self.filter.set_cutoff(cutoff)
-    #     if resonance is not None:
-    #         self.filter.set_resonance(resonance)
-    #     if filter_type is not None:
-    #         self.filter.set_type(filter_type)
-
     def set_adsr(self, attack, decay, sustain, release):
         self.adsr.set_adsr(attack, decay, sustain, release)
 
@@ -406,12 +412,19 @@ def main():
     midi_synth = MIDISynthesizer(buffer_size=512)
     midi_synth.set_waveform('triangle')
     midi_synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
-    midi_synth.set_filter_params(resonance=0.3, base_cutoff=1000, type="lowpass")
+
+    midi_synth.set_filter_params(
+        resonance=0.3,
+        base_cutoff=500,
+        type="lowpass",
+        envelope_amount=0,  # Increased for more dramatic effect
+        adsr_mix=0.6         # 60% envelope modulation, 40% static filter
+    )
     
     # Set up LFO
     midi_synth.set_lfo_params(
         rate=1.0,    # 5 Hz
-        depth=0.4,   # 0.5 semitones
+        depth=0,   # 0.5 semitones
         wave_type='triangle'
     )
     
