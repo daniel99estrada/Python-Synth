@@ -1,46 +1,34 @@
 import numpy as np
 import sounddevice as sd
 import mido
-import math
-from collections import defaultdict
-import threading
 import time
 
 class LFO:
     def __init__(self, sample_rate):
         self.sample_rate = sample_rate
         self.phase = 0.0
-        self.rate = 2.0  # Hz
-        self.depth = 0.5  # Amount for pitch modulation (semitones)
-        self.filter_depth = 2000  # Amount for filter modulation (Hz)
+        self.rate = 2.0
+        self.depth = 0.5
+        self.filter_depth = 2000
         self.wave_type = 'sine'
-        self.pitch_mix = 0.5  # Mix amount for pitch modulation (0.0 to 1.0)
-        self.filter_mix = 0.5  # Mix amount for filter modulation (0.0 to 1.0)
+        self.pitch_mix = 0.5
+        self.filter_mix = 0.5
     
-    def set_rate(self, rate):
-        """Set LFO rate in Hz (0.1 to 20 Hz)"""
-        self.rate = max(0.1, min(20.0, rate))
-    
-    def set_depth(self, depth):
-        """Set LFO depth in semitones for pitch modulation (0 to 12)"""
-        self.depth = max(0.0, min(12.0, depth))
-    
-    def set_filter_depth(self, depth):
-        """Set LFO depth in Hz for filter modulation (0 to 5000)"""
-        self.filter_depth = max(0.0, min(5000.0, depth))
-    
-    def set_mix(self, pitch_mix, filter_mix):
-        """Set mix levels for pitch and filter modulation (0.0 to 1.0)"""
-        self.pitch_mix = max(0.0, min(1.0, pitch_mix))
-        self.filter_mix = max(0.0, min(1.0, filter_mix))
-    
-    def set_wave_type(self, wave_type):
-        """Set LFO waveform type"""
+    def set_params(self, rate=None, depth=None, filter_depth=None, wave_type=None, pitch_mix=None, filter_mix=None):
+        if rate is not None:
+            self.rate = max(0.1, min(20.0, rate))
+        if depth is not None:
+            self.depth = max(0.0, min(12.0, depth))
+        if filter_depth is not None:
+            self.filter_depth = max(0.0, min(5000.0, filter_depth))
         if wave_type in ['sine', 'triangle', 'square']:
             self.wave_type = wave_type
+        if pitch_mix is not None:
+            self.pitch_mix = max(0.0, min(1.0, pitch_mix))
+        if filter_mix is not None:
+            self.filter_mix = max(0.0, min(1.0, filter_mix))
     
-    def generate_raw_value(self):
-        """Generate the raw LFO value without scaling"""
+    def generate_value(self):
         if self.wave_type == 'sine':
             value = np.sin(self.phase)
         elif self.wave_type == 'triangle':
@@ -48,60 +36,64 @@ class LFO:
         else:  # square
             value = np.sign(np.sin(self.phase))
         
-        # Update phase
-        self.phase += 2 * np.pi * self.rate / self.sample_rate
-        self.phase %= 2 * np.pi
+        self.phase = (self.phase + 2 * np.pi * self.rate / self.sample_rate) % (2 * np.pi)
         
-        return value
-    
-    def generate_sample(self):
-        """Generate next LFO sample with separate pitch and filter values"""
-        raw_value = self.generate_raw_value()
         return {
-            'pitch': raw_value * self.depth * self.pitch_mix,
-            'filter': raw_value * self.filter_depth * self.filter_mix
+            'pitch': value * self.depth * self.pitch_mix,
+            'filter': value * self.filter_depth * self.filter_mix
         }
+
+class ADSR:
+    def __init__(self, attack=0.1, decay=0.1, sustain=0.7, release=0.2):
+        self.set_params(attack, decay, sustain, release)
+
+    def set_params(self, attack, decay, sustain, release):
+        self.attack = max(0.001, attack)
+        self.decay = max(0.001, decay)
+        self.sustain = max(0.0, min(1.0, sustain))
+        self.release = max(0.001, release)
 
 class Filter:
     def __init__(self, sample_rate):
         self.sample_rate = sample_rate
-        self.cutoff = 1000.0  # Default cutoff frequency
-        self.resonance = 0.7  # Default resonance (0.0 to 1.0)
-        self.type = 'lowpass'  # Default filter type
-        
-        # Filter state variables
-        self.low = 0.0
-        self.band = 0.0
-        self.high = 0.0
+        self.cutoff = 1000.0
+        self.resonance = 0.7
+        self.type = 'lowpass'
+        self.low = self.band = self.high = 0.0
+        self.base_cutoff = 1000.0
+        self.envelope_amount = 0.5
+        self.min_cutoff = 20.0
+        self.max_cutoff = 20000.0
+        self.lfo_mod = 0.0
     
-    def set_cutoff(self, frequency):
-        """Set filter cutoff frequency"""
-        self.cutoff = max(20.0, min(20000.0, frequency))
+    def set_params(self, base_cutoff=None, resonance=None, type=None, envelope_amount=None):
+        if base_cutoff is not None:
+            self.base_cutoff = max(self.min_cutoff, min(self.max_cutoff, base_cutoff))
+        if resonance is not None:
+            self.resonance = max(0.0, min(0.99, resonance))
+        if type in ['lowpass', 'highpass', 'bandpass']:
+            self.type = type
+        if envelope_amount is not None:
+            self.envelope_amount = max(0.0, min(1.0, envelope_amount))
     
-    def set_resonance(self, resonance):
-        """Set filter resonance (0.0 to 1.0)"""
-        self.resonance = max(0.0, min(0.99, resonance))
+    def calculate_cutoff(self, envelope_value):
+        exp_env = envelope_value ** 2
+        mod_range = self.max_cutoff - self.base_cutoff
+        env_modulation = mod_range * exp_env * self.envelope_amount
+        return max(self.min_cutoff, min(self.max_cutoff, 
+                                      self.base_cutoff + env_modulation + self.lfo_mod))
     
-    def set_type(self, filter_type):
-        """Set filter type (lowpass, highpass, bandpass)"""
-        if filter_type in ['lowpass', 'highpass', 'bandpass']:
-            self.type = filter_type
-    
-    def process(self, input_signal):
-        """Process audio through the filter"""
-        output = np.zeros_like(input_signal)
-        
-        # Pre-calculate filter coefficients
+    def process(self, input_signal, envelope_value=1.0):
+        self.cutoff = self.calculate_cutoff(envelope_value)
         f = 2.0 * np.sin(np.pi * self.cutoff / self.sample_rate)
         q = 1.0 - self.resonance
         
+        output = np.zeros_like(input_signal)
         for i in range(len(input_signal)):
-            # Update filter state
             self.high = input_signal[i] - self.low - q * self.band
             self.band += f * self.high
             self.low += f * self.band
             
-            # Output based on filter type
             if self.type == 'lowpass':
                 output[i] = self.low
             elif self.type == 'highpass':
@@ -122,15 +114,12 @@ class NoteState:
         self.sample_rate = sample_rate
         self.total_samples = 0
 
-    def get_envelope_value(self, num_samples):
-        """Calculate ADSR envelope value for the current state"""
+    def get_envelope(self):
         current_time = self.total_samples / self.sample_rate
         
         if self.is_released:
-            release_time = (time.time() - self.released_time)
-            if release_time >= self.adsr.release:
-                return 0
-            return self.adsr.sustain * (1 - release_time / self.adsr.release)
+            release_time = time.time() - self.released_time
+            return 0 if release_time >= self.adsr.release else self.adsr.sustain * (1 - release_time / self.adsr.release)
         
         if current_time < self.adsr.attack:
             return current_time / self.adsr.attack
@@ -141,89 +130,14 @@ class NoteState:
         
         return self.adsr.sustain
 
-class ADSR:
-    def __init__(self, attack=0.1, decay=0.1, sustain=0.7, release=0.2):
-        self.attack = max(0.001, attack)
-        self.decay = max(0.001, decay)
-        self.sustain = max(0.0, min(1.0, sustain))
-        self.release = max(0.001, release)
-
-    def set_adsr(self, attack, decay, sustain, release):
-        """
-        Sets the ADSR envelope parameters for the synthesizer
-        
-        Parameters:
-        attack (float): Attack time in seconds
-        decay (float): Decay time in seconds
-        sustain (float): Sustain level (0-1)
-        release (float): Release time in seconds
-        """
-        self.attack = attack
-        self.decay = decay
-        self.sustain = sustain
-        self.release = release
-        
-class EnvelopeFilter(Filter):
-    def __init__(self, sample_rate):
-        super().__init__(sample_rate)
-        self.base_cutoff = 1000.0  # Base cutoff frequency
-        self.envelope_amount = 0.5  # Amount of envelope modulation (0.0 to 1.0)
-        self.min_cutoff = 20.0
-        self.max_cutoff = 20000.0
-        self.lfo_mod = 0.0  # Current LFO modulation value
-    
-    def set_base_cutoff(self, frequency):
-        """Set the base cutoff frequency"""
-        self.base_cutoff = max(self.min_cutoff, min(self.max_cutoff, frequency))
-    
-    def set_envelope_amount(self, amount):
-        """Set the amount of envelope modulation (0.0 to 1.0)"""
-        self.envelope_amount = max(0.0, min(1.0, amount))
-    
-    def set_lfo_mod(self, mod_value):
-        """Set the current LFO modulation value"""
-        self.lfo_mod = mod_value
-    
-    def calculate_cutoff(self, envelope_value):
-        """Calculate the current cutoff frequency based on envelope value and LFO"""
-        # Scale the envelope value exponentially for more musical results
-        exp_env = envelope_value ** 2
-        
-        # Calculate envelope modulation
-        mod_range = self.max_cutoff - self.base_cutoff
-        env_modulation = mod_range * exp_env * self.envelope_amount
-        
-        # Add LFO modulation
-        current_cutoff = self.base_cutoff + env_modulation + self.lfo_mod
-        return max(self.min_cutoff, min(self.max_cutoff, current_cutoff))
-    
-    def process(self, input_signal, envelope_value):
-        """Process audio through the filter with envelope modulation"""
-        output = np.zeros_like(input_signal)
-        
-        # Calculate current cutoff based on envelope and LFO
-        self.cutoff = self.calculate_cutoff(envelope_value)
-        
-        # Pre-calculate filter coefficients
-        f = 2.0 * np.sin(np.pi * self.cutoff / self.sample_rate)
-        q = 1.0 - self.resonance
-        
-        for i in range(len(input_signal)):
-            # Update filter state
-            self.high = input_signal[i] - self.low - q * self.band
-            self.band += f * self.high
-            self.low += f * self.band
-            
-            # Output based on filter type
-            if self.type == 'lowpass':
-                output[i] = self.low
-            elif self.type == 'highpass':
-                output[i] = self.high
-            else:  # bandpass
-                output[i] = self.band
-        
-        return output
 class MIDISynthesizer:
+    WAVE_TYPES = {
+        'sine': lambda x: np.sin(x),
+        'square': lambda x: np.sign(np.sin(x)),
+        'sawtooth': lambda x: 2 * (x / (2 * np.pi) - np.floor(0.5 + x / (2 * np.pi))),
+        'triangle': lambda x: 2 * np.abs(2 * (x / (2 * np.pi) - np.floor(0.5 + x / (2 * np.pi)))) - 1
+    }
+
     def __init__(self, sample_rate=44100, buffer_size=512):
         self.sample_rate = sample_rate
         self.buffer_size = buffer_size
@@ -233,142 +147,78 @@ class MIDISynthesizer:
         self.last_frame = np.zeros(buffer_size)
         self.wave_type = 'sine'
         
-        # Initialize ADSR, EnvelopeFilter, and LFO
-        self.adsr = ADSR(attack=0.1, decay=0.1, sustain=0.7, release=0.2)
-        self.filter = EnvelopeFilter(sample_rate)
-        self.lfo = LFO(sample_rate)        
+        self.adsr = ADSR()
+        self.filter = Filter(sample_rate)
+        self.lfo = LFO(sample_rate)
 
-    def generate_continuous_tone(self, frequency, num_samples, note_state):
-        # Pre-calculate all LFO values for this buffer
+    def set_waveform(self, waveform):
+        self.wave_type = waveform
+
+    def generate_tone(self, frequency, num_samples, note_state):
         pitch_mod = np.zeros(num_samples)
         filter_mod = np.zeros(num_samples)
         
-        # Generate the LFO values
         for i in range(num_samples):
-            raw_value = self.lfo.generate_raw_value()
-            pitch_mod[i] = raw_value * self.lfo.depth * self.lfo.pitch_mix
-            filter_mod[i] = raw_value * self.lfo.filter_depth * self.lfo.filter_mix
+            lfo_values = self.lfo.generate_value()
+            pitch_mod[i] = lfo_values['pitch']
+            filter_mod[i] = lfo_values['filter']
         
-        # Convert semitone modulation to frequency multiplier
         freq_mod = 2 ** (pitch_mod / 12)
         modulated_freq = frequency * freq_mod
-        
-        # Generate phase increments for varying frequency
         phase_increments = 2 * np.pi * modulated_freq / self.sample_rate
         phases = note_state.phase + np.cumsum(phase_increments)
         
-        # Generate waveform
-        if self.wave_type == 'sine':
-            wave = np.sin(phases)
-        elif self.wave_type == 'square':
-            wave = np.sign(np.sin(phases))
-        elif self.wave_type == 'sawtooth':
-            wave = 2 * (phases / (2 * np.pi) - np.floor(0.5 + phases / (2 * np.pi)))
-        elif self.wave_type == 'triangle':
-            wave = 2 * np.abs(2 * (phases / (2 * np.pi) - np.floor(0.5 + phases / (2 * np.pi)))) - 1
-        
-        # Apply envelope
-        envelope = note_state.get_envelope_value(num_samples)
+        wave = self.WAVE_TYPES[self.wave_type](phases)
+        envelope = note_state.get_envelope()
         wave *= envelope * note_state.velocity * 0.3
         
-        # Update filter LFO modulation
-        self.filter.set_lfo_mod(filter_mod[-1])
-        
-        # Update phase for next buffer
+        self.filter.lfo_mod = filter_mod[-1]
         note_state.phase = phases[-1] % (2 * np.pi)
         note_state.total_samples += num_samples
         
         return wave
-    def set_lfo_mix(self, pitch_mix, filter_mix):
-        """Set the mix levels for LFO modulation"""
-        self.lfo.set_mix(pitch_mix, filter_mix)
-    
-    def set_lfo_params(self, rate=None, pitch_depth=None, filter_depth=None, wave_type=None):
-        """Set LFO parameters including separate depths for pitch and filter"""
-        if rate is not None:
-            self.lfo.set_rate(rate)
-        if pitch_depth is not None:
-            self.lfo.set_depth(pitch_depth)
-        if filter_depth is not None:
-            self.lfo.set_filter_depth(filter_depth)
-        if wave_type is not None:
-            self.lfo.set_wave_type(wave_type)
-    
-    def set_filter_params(self, base_cutoff=None, resonance=None, type=None, envelope_amount=None):
-        """Set filter parameters including envelope amount"""
-        if base_cutoff is not None:
-            self.filter.set_base_cutoff(base_cutoff)
-        if resonance is not None:
-            self.filter.set_resonance(resonance)
-        if type is not None:
-            self.filter.set_type(type)
-        if envelope_amount is not None:
-            self.filter.set_envelope_amount(envelope_amount)
-    def generate_waveform(self, frequency, phase, num_samples):
-        t = np.linspace(0, num_samples/self.sample_rate, num_samples, endpoint=False)
-        omega = 2 * np.pi * frequency * t + phase
-        
-        if self.wave_type == 'sine':
-            return np.sin(omega) 
-        elif self.wave_type == 'square':
-            return np.sign(np.sin(omega))
-        elif self.wave_type == 'sawtooth':
-            return 2 * (omega / (2 * np.pi) - np.floor(0.5 + omega / (2 * np.pi)))
-        elif self.wave_type == 'triangle':
-            return 2 * np.abs(2 * (omega / (2 * np.pi) - np.floor(0.5 + omega / (2 * np.pi)))) - 1
-        
-        return np.sin(omega)
-        
-    def start_audio_stream(self):
 
-        def callback(outdata, frames, time, status):
-            if status:
-                print(status)
-            
-            try:
+    def audio_callback(self, outdata, frames, time, status):
+        if status:
+            print(status)
+        
+        try:
+            if self.active_notes:
+                combined = np.zeros(frames)
+                max_envelope = 0.0
+                notes_to_remove = []
+                
+                for note, state in self.active_notes.items():
+                    freq = 440.0 * (2.0 ** ((note - 69) / 12.0))
+                    wave = self.generate_tone(freq, frames, state)
+                    combined += wave
+                    max_envelope = max(max_envelope, state.get_envelope())
+                    
+                    if state.is_released and state.get_envelope() <= 0:
+                        notes_to_remove.append(note)
+                
+                for note in notes_to_remove:
+                    del self.active_notes[note]
+                
                 if self.active_notes:
-                    combined = np.zeros(frames)
-                    max_envelope = 0.0
-                    notes_to_remove = []
-                    
-                    # First pass: generate audio and find maximum envelope value
-                    for note, note_state in self.active_notes.items():
-                        freq = midi_to_frequency(note)
-                        wave = self.generate_continuous_tone(
-                            freq,
-                            frames,
-                            note_state
-                        )
-                        
-                        combined += wave
-                        max_envelope = max(max_envelope, note_state.get_envelope_value(frames))
-                        
-                        if note_state.is_released and note_state.get_envelope_value(frames) <= 0:
-                            notes_to_remove.append(note)
-                    
-                    for note in notes_to_remove:
-                        del self.active_notes[note]
-                    
-                    # Apply envelope-controlled filter to combined signal
-                    if len(self.active_notes) > 0:
-                        combined = self.filter.process(combined, max_envelope)
-                        combined = np.tanh(combined)  # Soft limiting
-                    
-                    outdata[:] = combined.reshape(-1, 1)
-                else:
-                    fade_out = np.linspace(1, 0, frames)
-                    outdata[:] = (self.last_frame * fade_out).reshape(-1, 1)
+                    combined = self.filter.process(combined, max_envelope)
+                    combined = np.tanh(combined)
                 
-                self.last_frame = outdata[:, 0]
-                
-            except Exception as e:
-                print(f"Error in audio callback: {e}")
-                outdata.fill(0)
+                outdata[:] = combined.reshape(-1, 1)
+            else:
+                outdata[:] = (self.last_frame * np.linspace(1, 0, frames)).reshape(-1, 1)
+            
+            self.last_frame = outdata[:, 0]
+            
+        except Exception as e:
+            print(f"Error in audio callback: {e}")
+            outdata.fill(0)
 
+    def start(self):
         try:
             self.stream = sd.OutputStream(
                 channels=1,
-                callback=callback,
+                callback=self.audio_callback,
                 samplerate=self.sample_rate,
                 blocksize=self.buffer_size,
                 latency='low',
@@ -378,7 +228,8 @@ class MIDISynthesizer:
             self.is_playing = True
         except Exception as e:
             print(f"Error starting audio stream: {e}")
-    def stop_audio_stream(self):
+
+    def stop(self):
         if self.stream:
             self.stream.stop()
             self.stream.close()
@@ -389,72 +240,45 @@ class MIDISynthesizer:
     def note_on(self, note, velocity):
         self.active_notes[note] = NoteState(velocity / 127.0, self.sample_rate, self.adsr)
         if not self.is_playing:
-            self.start_audio_stream()
+            self.start()
 
     def note_off(self, note):
         if note in self.active_notes:
             self.active_notes[note].is_released = True
             self.active_notes[note].released_time = time.time()
 
-    def set_waveform(self, wave_type):
-        if wave_type in ['sine', 'square', 'sawtooth', 'triangle']:
-            self.wave_type = wave_type
 
-    def set_adsr(self, attack, decay, sustain, release):
-        self.adsr.set_adsr(attack, decay, sustain, release)
 
-def midi_to_frequency(note_number):
-    return 440.0 * (2.0 ** ((note_number - 69) / 12.0))
-
-def listen_for_midi_input(midi_synth):
+def main():
+    synth = MIDISynthesizer()
+    synth.wave_type = 'sawtooth'
+    synth.adsr.set_params(0.5, 0.3, 0.7, 0.6)
+    synth.filter.set_params(base_cutoff=200, resonance=0.3, type="lowpass", envelope_amount=0)
+    synth.lfo.set_params(rate=0.5, depth=0.5, filter_depth=500, wave_type='sine',
+                        pitch_mix=0.8, filter_mix=0.5)
+    
     try:
         input_names = mido.get_input_names()
         if not input_names:
-            print("No MIDI devices found. Please connect a MIDI keyboard.")
+            print("No MIDI devices found.")
             return
 
-        print(f"Available MIDI input devices: {input_names}")
-        print(f"Listening for MIDI input on {input_names[0]}...")
+        print(f"Available MIDI devices: {input_names}")
+        print(f"Using device: {input_names[0]}")
         
         with mido.open_input(input_names[0]) as midi_in:
             for msg in midi_in:
                 if msg.type == 'note_on':
                     if msg.velocity > 0:
-                        midi_synth.note_on(msg.note, msg.velocity)
+                        synth.note_on(msg.note, msg.velocity)
                     else:
-                        midi_synth.note_off(msg.note)
+                        synth.note_off(msg.note)
                 elif msg.type == 'note_off':
-                    midi_synth.note_off(msg.note)
-    except Exception as e:
-        print(f"Error in MIDI input handling: {e}")
-        midi_synth.stop_audio_stream()
-
-def main():    
-    midi_synth = MIDISynthesizer(buffer_size=512)
-    midi_synth.set_waveform('sawtooth')
-    midi_synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
-    midi_synth.set_filter_params(resonance=0.3, base_cutoff=200, type="lowpass", envelope_amount= 0)
-    
-    # Set up LFO
-    midi_synth.set_lfo_params(
-        rate=0.5,           # 5 Hz
-        pitch_depth=0.5,    # 0.5 semitones for pitch
-        filter_depth=500,  # 2000 Hz for filter
-        wave_type='sine'
-    )
-
-    # Set mix levels (0.0 to 1.0)
-    midi_synth.set_lfo_mix(
-        pitch_mix=0.8,    # 30% pitch modulation
-        filter_mix=0.5    # 70% filter modulation
-    )
-    
-    try:
-        listen_for_midi_input(midi_synth)
+                    synth.note_off(msg.note)
     except KeyboardInterrupt:
         print("\nStopping synthesizer...")
-        midi_synth.stop_audio_stream()
     finally:
+        synth.stop()
         print("Cleanup complete")
 
 if __name__ == "__main__":
