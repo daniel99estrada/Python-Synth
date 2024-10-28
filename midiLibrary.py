@@ -11,24 +11,36 @@ class LFO:
         self.sample_rate = sample_rate
         self.phase = 0.0
         self.rate = 2.0  # Hz
-        self.depth = 0.5  # Semitones
+        self.depth = 0.5  # Amount for pitch modulation (semitones)
+        self.filter_depth = 2000  # Amount for filter modulation (Hz)
         self.wave_type = 'sine'
+        self.pitch_mix = 0.5  # Mix amount for pitch modulation (0.0 to 1.0)
+        self.filter_mix = 0.5  # Mix amount for filter modulation (0.0 to 1.0)
     
     def set_rate(self, rate):
         """Set LFO rate in Hz (0.1 to 20 Hz)"""
         self.rate = max(0.1, min(20.0, rate))
     
     def set_depth(self, depth):
-        """Set LFO depth in semitones (0 to 12)"""
+        """Set LFO depth in semitones for pitch modulation (0 to 12)"""
         self.depth = max(0.0, min(12.0, depth))
+    
+    def set_filter_depth(self, depth):
+        """Set LFO depth in Hz for filter modulation (0 to 5000)"""
+        self.filter_depth = max(0.0, min(5000.0, depth))
+    
+    def set_mix(self, pitch_mix, filter_mix):
+        """Set mix levels for pitch and filter modulation (0.0 to 1.0)"""
+        self.pitch_mix = max(0.0, min(1.0, pitch_mix))
+        self.filter_mix = max(0.0, min(1.0, filter_mix))
     
     def set_wave_type(self, wave_type):
         """Set LFO waveform type"""
         if wave_type in ['sine', 'triangle', 'square']:
             self.wave_type = wave_type
     
-    def generate_sample(self):
-        """Generate next LFO sample and update phase"""
+    def generate_raw_value(self):
+        """Generate the raw LFO value without scaling"""
         if self.wave_type == 'sine':
             value = np.sin(self.phase)
         elif self.wave_type == 'triangle':
@@ -40,8 +52,16 @@ class LFO:
         self.phase += 2 * np.pi * self.rate / self.sample_rate
         self.phase %= 2 * np.pi
         
-        return value * self.depth
+        return value
     
+    def generate_sample(self):
+        """Generate next LFO sample with separate pitch and filter values"""
+        raw_value = self.generate_raw_value()
+        return {
+            'pitch': raw_value * self.depth * self.pitch_mix,
+            'filter': raw_value * self.filter_depth * self.filter_mix
+        }
+
 class Filter:
     def __init__(self, sample_rate):
         self.sample_rate = sample_rate
@@ -143,7 +163,6 @@ class ADSR:
         self.sustain = sustain
         self.release = release
         
-
 class EnvelopeFilter(Filter):
     def __init__(self, sample_rate):
         super().__init__(sample_rate)
@@ -151,33 +170,38 @@ class EnvelopeFilter(Filter):
         self.envelope_amount = 0.5  # Amount of envelope modulation (0.0 to 1.0)
         self.min_cutoff = 20.0
         self.max_cutoff = 20000.0
-    
-    def set_envelope_amount(self, amount):
-        """Set the amount of envelope modulation (0.0 to 1.0)"""
-        self.envelope_amount = max(0.0, min(1.0, amount))
+        self.lfo_mod = 0.0  # Current LFO modulation value
     
     def set_base_cutoff(self, frequency):
         """Set the base cutoff frequency"""
         self.base_cutoff = max(self.min_cutoff, min(self.max_cutoff, frequency))
     
+    def set_envelope_amount(self, amount):
+        """Set the amount of envelope modulation (0.0 to 1.0)"""
+        self.envelope_amount = max(0.0, min(1.0, amount))
+    
+    def set_lfo_mod(self, mod_value):
+        """Set the current LFO modulation value"""
+        self.lfo_mod = mod_value
+    
     def calculate_cutoff(self, envelope_value):
-        """Calculate the current cutoff frequency based on envelope value"""
+        """Calculate the current cutoff frequency based on envelope value and LFO"""
         # Scale the envelope value exponentially for more musical results
         exp_env = envelope_value ** 2
         
-        # Calculate modulation amount
+        # Calculate envelope modulation
         mod_range = self.max_cutoff - self.base_cutoff
-        modulation = mod_range * exp_env * self.envelope_amount
+        env_modulation = mod_range * exp_env * self.envelope_amount
         
-        # Apply modulation to base cutoff
-        current_cutoff = self.base_cutoff + modulation
+        # Add LFO modulation
+        current_cutoff = self.base_cutoff + env_modulation + self.lfo_mod
         return max(self.min_cutoff, min(self.max_cutoff, current_cutoff))
     
     def process(self, input_signal, envelope_value):
         """Process audio through the filter with envelope modulation"""
         output = np.zeros_like(input_signal)
         
-        # Calculate current cutoff based on envelope
+        # Calculate current cutoff based on envelope and LFO
         self.cutoff = self.calculate_cutoff(envelope_value)
         
         # Pre-calculate filter coefficients
@@ -199,7 +223,6 @@ class EnvelopeFilter(Filter):
                 output[i] = self.band
         
         return output
-
 class MIDISynthesizer:
     def __init__(self, sample_rate=44100, buffer_size=512):
         self.sample_rate = sample_rate
@@ -213,27 +236,25 @@ class MIDISynthesizer:
         # Initialize ADSR, EnvelopeFilter, and LFO
         self.adsr = ADSR(attack=0.1, decay=0.1, sustain=0.7, release=0.2)
         self.filter = EnvelopeFilter(sample_rate)
-        self.lfo = LFO(sample_rate)
-    
-    def set_lfo_params(self, rate=None, depth=None, wave_type=None):
-        """Set LFO parameters"""
-        if rate is not None:
-            self.lfo.set_rate(rate)
-        if depth is not None:
-            self.lfo.set_depth(depth)
-        if wave_type is not None:
-            self.lfo.set_wave_type(wave_type)
-    
+        self.lfo = LFO(sample_rate)        
+
     def generate_continuous_tone(self, frequency, num_samples, note_state):
-        # Generate array of frequencies with LFO modulation
-        lfo_mod = np.array([self.lfo.generate_sample() for _ in range(num_samples)])
+        # Pre-calculate all LFO values for this buffer
+        pitch_mod = np.zeros(num_samples)
+        filter_mod = np.zeros(num_samples)
+        
+        # Generate the LFO values
+        for i in range(num_samples):
+            raw_value = self.lfo.generate_raw_value()
+            pitch_mod[i] = raw_value * self.lfo.depth * self.lfo.pitch_mix
+            filter_mod[i] = raw_value * self.lfo.filter_depth * self.lfo.filter_mix
+        
         # Convert semitone modulation to frequency multiplier
-        freq_mod = 2 ** (lfo_mod / 12)
+        freq_mod = 2 ** (pitch_mod / 12)
         modulated_freq = frequency * freq_mod
         
         # Generate phase increments for varying frequency
         phase_increments = 2 * np.pi * modulated_freq / self.sample_rate
-        # Calculate phase array
         phases = note_state.phase + np.cumsum(phase_increments)
         
         # Generate waveform
@@ -250,11 +271,28 @@ class MIDISynthesizer:
         envelope = note_state.get_envelope_value(num_samples)
         wave *= envelope * note_state.velocity * 0.3
         
+        # Update filter LFO modulation
+        self.filter.set_lfo_mod(filter_mod[-1])
+        
         # Update phase for next buffer
         note_state.phase = phases[-1] % (2 * np.pi)
         note_state.total_samples += num_samples
         
         return wave
+    def set_lfo_mix(self, pitch_mix, filter_mix):
+        """Set the mix levels for LFO modulation"""
+        self.lfo.set_mix(pitch_mix, filter_mix)
+    
+    def set_lfo_params(self, rate=None, pitch_depth=None, filter_depth=None, wave_type=None):
+        """Set LFO parameters including separate depths for pitch and filter"""
+        if rate is not None:
+            self.lfo.set_rate(rate)
+        if pitch_depth is not None:
+            self.lfo.set_depth(pitch_depth)
+        if filter_depth is not None:
+            self.lfo.set_filter_depth(filter_depth)
+        if wave_type is not None:
+            self.lfo.set_wave_type(wave_type)
     
     def set_filter_params(self, base_cutoff=None, resonance=None, type=None, envelope_amount=None):
         """Set filter parameters including envelope amount"""
@@ -266,7 +304,6 @@ class MIDISynthesizer:
             self.filter.set_type(type)
         if envelope_amount is not None:
             self.filter.set_envelope_amount(envelope_amount)
-        
     def generate_waveform(self, frequency, phase, num_samples):
         t = np.linspace(0, num_samples/self.sample_rate, num_samples, endpoint=False)
         omega = 2 * np.pi * frequency * t + phase
@@ -281,8 +318,9 @@ class MIDISynthesizer:
             return 2 * np.abs(2 * (omega / (2 * np.pi) - np.floor(0.5 + omega / (2 * np.pi)))) - 1
         
         return np.sin(omega)
-    
+        
     def start_audio_stream(self):
+
         def callback(outdata, frames, time, status):
             if status:
                 print(status)
@@ -327,7 +365,6 @@ class MIDISynthesizer:
                 print(f"Error in audio callback: {e}")
                 outdata.fill(0)
 
-
         try:
             self.stream = sd.OutputStream(
                 channels=1,
@@ -341,7 +378,6 @@ class MIDISynthesizer:
             self.is_playing = True
         except Exception as e:
             print(f"Error starting audio stream: {e}")
-
     def stop_audio_stream(self):
         if self.stream:
             self.stream.stop()
@@ -363,15 +399,6 @@ class MIDISynthesizer:
     def set_waveform(self, wave_type):
         if wave_type in ['sine', 'square', 'sawtooth', 'triangle']:
             self.wave_type = wave_type
-
-    # def set_filter_params(self, cutoff=None, resonance=None, filter_type=None):
-    #     """Set filter parameters"""
-    #     if cutoff is not None:
-    #         self.filter.set_cutoff(cutoff)
-    #     if resonance is not None:
-    #         self.filter.set_resonance(resonance)
-    #     if filter_type is not None:
-    #         self.filter.set_type(filter_type)
 
     def set_adsr(self, attack, decay, sustain, release):
         self.adsr.set_adsr(attack, decay, sustain, release)
@@ -406,13 +433,20 @@ def main():
     midi_synth = MIDISynthesizer(buffer_size=512)
     midi_synth.set_waveform('triangle')
     midi_synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
-    midi_synth.set_filter_params(resonance=0.3, base_cutoff=1000, type="lowpass")
+    midi_synth.set_filter_params(resonance=0.3, base_cutoff=500, type="lowpass")
     
     # Set up LFO
     midi_synth.set_lfo_params(
-        rate=1.0,    # 5 Hz
-        depth=0.4,   # 0.5 semitones
-        wave_type='triangle'
+        rate=0.3,           # 5 Hz
+        pitch_depth=0.2,    # 0.5 semitones for pitch
+        filter_depth=500,  # 2000 Hz for filter
+        wave_type='sine'
+    )
+
+    # Set mix levels (0.0 to 1.0)
+    midi_synth.set_lfo_mix(
+        pitch_mix=0.5,    # 30% pitch modulation
+        filter_mix=1    # 70% filter modulation
     )
     
     try:
