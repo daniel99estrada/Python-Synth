@@ -431,22 +431,22 @@ def listen_for_midi_input(midi_synth):
 
 def main():    
     midi_synth = MIDISynthesizer(buffer_size=512)
-    midi_synth.set_waveform('triangle')
+    midi_synth.set_waveform('sawtooth')
     midi_synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
-    midi_synth.set_filter_params(resonance=0.3, base_cutoff=500, type="lowpass")
+    midi_synth.set_filter_params(resonance=0.3, base_cutoff=200, type="lowpass", envelope_amount= 0)
     
     # Set up LFO
     midi_synth.set_lfo_params(
-        rate=0.3,           # 5 Hz
-        pitch_depth=0.2,    # 0.5 semitones for pitch
+        rate=0.5,           # 5 Hz
+        pitch_depth=0.5,    # 0.5 semitones for pitch
         filter_depth=500,  # 2000 Hz for filter
         wave_type='sine'
     )
 
     # Set mix levels (0.0 to 1.0)
     midi_synth.set_lfo_mix(
-        pitch_mix=0.5,    # 30% pitch modulation
-        filter_mix=1    # 70% filter modulation
+        pitch_mix=0.8,    # 30% pitch modulation
+        filter_mix=0.5    # 70% filter modulation
     )
     
     try:
