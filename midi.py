@@ -32,7 +32,6 @@ class MIDISynthesizer:
         return wave
 
     def start_audio_stream(self):
-        """Start the audio output stream with optimized callback"""
         def callback(outdata, frames, time, status):
             if status:
                 print(status)
@@ -40,25 +39,45 @@ class MIDISynthesizer:
             try:
                 if self.active_notes:
                     combined = np.zeros(frames)
-                    current_notes = dict(self.active_notes)
+                    max_envelope = 0.0
+                    notes_to_remove = []
                     
-                    for note, velocity in current_notes.items():
-                        if velocity > 0:
-                            freq = midi_to_frequency(note)
-                            wave = self.generate_continuous_tone(
-                                freq,
-                                frames,
-                                velocity / 127.0
-                            )
-                            combined += wave
+                    # First pass: generate audio and find maximum envelope value
+                    for note, note_state in self.active_notes.items():
+                        freq = midi_to_frequency(note)
+                        wave = self.generate_continuous_tone(
+                            freq,
+                            frames,
+                            note_state
+                        )
+                        
+                        combined += wave
+                        max_envelope = max(max_envelope, note_state.get_envelope_value(frames))
+                        
+                        if note_state.is_released and note_state.get_envelope_value(frames) <= 0:
+                            notes_to_remove.append(note)
                     
-                    # Soft limiting to prevent clipping
-                    if len(current_notes) > 0:
-                        combined = np.tanh(combined)
+                    for note in notes_to_remove:
+                        del self.active_notes[note]
+                    
+                    # Dynamic scaling based on number of active notes
+                    if len(self.active_notes) > 1:
+                        scaling_factor = 1.0 / np.sqrt(len(self.active_notes))
+                        combined *= scaling_factor
+                    
+                    # Apply envelope-controlled filter
+                    if len(self.active_notes) > 0:
+                        combined = self.filter.process(combined, max_envelope)
+                        
+                        # Apply DC offset filter
+                        combined = self.dc_filter(combined)
+                        
+                        # Apply soft clipping and master volume
+                        combined = self.apply_soft_clipper(combined)
+                        combined *= self.master_volume
                     
                     outdata[:] = combined.reshape(-1, 1)
                 else:
-                    # Gentle fade out to prevent clicks
                     fade_out = np.linspace(1, 0, frames)
                     outdata[:] = (self.last_frame * fade_out).reshape(-1, 1)
                 
@@ -93,11 +112,21 @@ class MIDISynthesizer:
         self.phase.clear()
 
     def note_on(self, note, velocity):
-        """Handle note-on MIDI message"""
-        self.active_notes[note] = velocity
+        # Implement voice stealing if we exceed max_voices
+        if len(self.active_notes) >= self.max_voices:
+            # Find the oldest note and remove it
+            oldest_note = min(self.active_notes.items(), 
+                            key=lambda x: x[1].start_time)[0]
+            del self.active_notes[oldest_note]
+            
+        self.active_notes[note] = NoteState(velocity / 127.0, self.sample_rate, self.adsr)
         if not self.is_playing:
             self.start_audio_stream()
 
+    def apply_soft_clipper(self, signal, threshold=0.8):
+        """Apply soft clipping to prevent harsh digital distortion"""
+        return np.tanh(signal / threshold) * threshold
+    
     def note_off(self, note):
         """Handle note-off MIDI message"""
         if note in self.active_notes:
