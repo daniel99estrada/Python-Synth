@@ -13,6 +13,16 @@ class LFO:
         self.wave_type = 'sine'
         self.pitch_mix = 0.5
         self.filter_mix = 0.5
+
+    def get_params(self):
+        return {
+            'rate': self.rate,
+            'depth': self.depth,
+            'filter_depth': self.filter_depth,
+            'wave_type': self.wave_type,
+            'pitch_mix': self.pitch_mix,
+            'filter_mix': self.filter_mix
+        }
     
     def set_params(self, rate=None, depth=None, filter_depth=None, wave_type=None, pitch_mix=None, filter_mix=None):
         if rate is not None:
@@ -53,6 +63,14 @@ class ADSR:
         self.sustain = max(0.0, min(1.0, sustain))
         self.release = max(0.001, release)
 
+    def get_params(self):
+        return {
+            'attack': self.attack,
+            'decay': self.decay,
+            'sustain': self.sustain,
+            'release': self.release
+        }
+
 class Filter:
     def __init__(self, sample_rate):
         self.sample_rate = sample_rate
@@ -65,6 +83,17 @@ class Filter:
         self.min_cutoff = 20.0
         self.max_cutoff = 20000.0
         self.lfo_mod = 0.0
+
+    def get_params(self):
+        return {
+            'base_cutoff': self.base_cutoff,
+            'resonance': self.resonance,
+            'type': self.type,
+            'envelope_amount': self.envelope_amount,
+            'min_cutoff': self.min_cutoff,
+            'max_cutoff': self.max_cutoff,
+            'lfo_mod': self.lfo_mod
+        }
     
     def set_params(self, base_cutoff=None, resonance=None, type=None, envelope_amount=None):
         if base_cutoff is not None:

@@ -26,13 +26,27 @@ class SynthServer:
     def setup_synth(self):
         """Initial synth setup"""
         self.synth.set_waveform('sawtooth')
-        self.synth.set_adsr(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
-        self.synth.set_filter_params(
+        self.synth.adsr.set_params(attack=0.5, decay=0.3, sustain=0.7, release=0.6)
+        self.synth.filter.set_params(
             resonance=0.3,
             base_cutoff=0.7,
             type="lowpass",
             envelope_amount=0.1
         )
+        self.synth.lfo.set_params(
+            pitch_mix=0.8,
+            filter_mix=0.5
+        )
+        # Log initial setup
+
+    
+    async def register(self, websocket):
+        self.clients.add(websocket)
+        self.logger.info(f"Client connected. Total clients: {len(self.clients)}")
+        
+    async def unregister(self, websocket):
+        self.clients.remove(websocket)
+        self.logger.info(f"Client disconnected. Total clients: {len(self.clients)}")
     
     async def register(self, websocket):
         self.clients.add(websocket)
@@ -48,10 +62,12 @@ class SynthServer:
             return
             
         state = {
-            'waveform': self.synth.current_waveform,
-            'adsr': self.synth.get_adsr_params(),
-            'filter': self.synth.get_filter_params()
-        }
+            'waveform': self.synth.wave_type,
+            'adsr': self.synth.adsr.get_params(),
+            'filter': self.synth.filter.get_params(),
+            'lfo': self.synth.lfo.get_params()
+            }
+        
         
         message = json.dumps({
             'type': 'state_update',
@@ -63,7 +79,7 @@ class SynthServer:
         )
 
     async def handle_message(self, websocket):
-        """Handle incoming WebSocket messages"""
+        """Handle incoming WebSocket messages with enhanced LFO logging"""
         try:
             await self.register(websocket)
             
@@ -79,12 +95,32 @@ class SynthServer:
                         self.synth.set_waveform(params['waveform'])
                         
                     elif command == 'set_adsr':
-                        self.synth.set_adsr(**params)
+                        self.synth.adsr.set_params(**params)
                         
                     elif command == 'set_filter':
-                        self.synth.set_filter_params(**params)
-                        print(params)
+                        self.synth.filter.set_params(**params)
+
+                    elif command == 'set_lfo_params':
+                        # Enhanced LFO parameter logging
+                        lfo_params = {}
+                        if 'rate' in params:
+                            lfo_params['rate'] = float(params['rate'])
+                        if 'pitch_depth' in params:
+                            lfo_params['pitch_depth'] = float(params['pitch_depth'])
+                        if 'filter_depth' in params:
+                            lfo_params['filter_depth'] = float(params['filter_depth'])
+                        if 'wave_type' in params:
+                            lfo_params['wave_type'] = params['wave_type']
+                        if 'pitch_mix' in params:
+                            lfo_params['pitch_mix'] = float(params['pitch_mix'])
+                        if 'filter_mix' in params:
+                            lfo_params['filter_mix'] = float(params['filter_mix'])
+
+                        # Set the LFO parameters and log the changes
+                        self.synth.lfo.set_params(**lfo_params)
+                        self.logger.debug(f"LFO parameters updated: {json.dumps(lfo_params, indent=2)}")
                         
+                    
                     # Send confirmation back to client
                     await websocket.send(json.dumps({
                         'status': 'success',
@@ -95,6 +131,7 @@ class SynthServer:
                     await self.broadcast_state()
                     
                 except json.JSONDecodeError:
+                    self.logger.error("Invalid JSON format received")
                     await websocket.send(json.dumps({
                         'status': 'error',
                         'message': 'Invalid JSON format'

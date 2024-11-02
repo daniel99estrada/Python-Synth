@@ -14,6 +14,14 @@ const defaultSettings = {
     resonance: 0.3,
     envelope_amount: 0.1,
     type: 'lowpass'
+  },
+  lfo: { 
+    rate: 0.5,
+    depth: 0.5,
+    filter_depth: 0.5,
+    wave_type: "sine",
+    pitch_mix: 0.5,
+    filter_mix: 0.5 
   }
 };
 
@@ -78,6 +86,14 @@ function App() {
     });
   };
 
+  const updateLFO = (parameter, value) => {
+    const newValue = parameter === 'wave_type' ? value : parseFloat(value);
+    setSettings(prev => ({
+      ...prev,
+      lfo: { ...prev.lfo, [parameter]: newValue }
+    }));
+    sendMessage('set_lfo_params', { ...settings.lfo, [parameter]: newValue });
+  };
   const updateFilter = (parameter, value) => {
     const newValue = parameter === 'type' ? value : parseFloat(value);
     setSettings(prev => ({
@@ -204,7 +220,30 @@ function App() {
               ))}
             </div>
           </div>
-
+        {/* LFO Controls */}
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold mb-4">LFO Settings</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {Object.entries(settings.lfo).map(([param, value]) => (
+              param === 'wave_type' ? (
+                <div key={param}>
+                  <label className="block text-sm font-medium mb-2 capitalize">{param}</label>
+                  <select value={value} onChange={(e) => updateLFO(param, e.target.value)} className="w-full bg-gray-700 rounded-md px-3 py-2">
+                    <option value="sine">Sine</option>
+                    <option value="square">Square</option>
+                    <option value="sawtooth">Sawtooth</option>
+                    <option value="triangle">Triangle</option>
+                  </select>
+                </div>
+              ) : (
+                <div key={param}>
+                  <label className="block text-sm font-medium mb-2 capitalize">{param}: {value.toFixed(2)}</label>
+                  <input type="range" min="0" max="1" step="0.01" value={value} onChange={(e) => updateLFO(param, e.target.value)} className="w-full" />
+                </div>
+              )
+            ))}
+          </div>
+        </div>
           {/* Settings Display */}
           <div className="bg-gray-900 rounded-lg p-4">
             <h2 className="text-xl font-semibold mb-2">Current Settings</h2>
